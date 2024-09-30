@@ -1,19 +1,71 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"time"
+
+	"github.com/tjob3285/go-load-balancer/config"
 )
+
+type Server struct {
+	URL       *url.URL
+	IsHealthy bool
+	Mutex     sync.Mutex
+}
+
+type LoadBalancer struct {
+	Current int
+	Mutex   sync.Mutex
+}
+
+// round robin algorithm implementation to distribute load across servers
+func (lb *LoadBalancer) getNextServer(servers []*Server) *Server {
+	lb.Mutex.Lock()
+	defer lb.Mutex.Unlock()
+
+	for i := 0; i < len(servers); i++ {
+		idx := lb.Current % len(servers)
+		nextServer := servers[idx]
+		lb.Current++
+
+		nextServer.Mutex.Lock()
+		isHealthy := nextServer.IsHealthy
+		nextServer.Mutex.Unlock()
+
+		if isHealthy {
+			return nextServer
+		}
+	}
+
+	return nil
+}
 
 func (s *Server) ReverseProxy() *httputil.ReverseProxy {
 	return httputil.NewSingleHostReverseProxy(s.URL)
 }
 
+// health check function that runs in given interval to check health of servers
+func healthCheck(s *Server, healthCheckInterval time.Duration) {
+	for range time.Tick(healthCheckInterval) {
+		res, err := http.Head(s.URL.String())
+		s.Mutex.Lock()
+		if err != nil || res.StatusCode != http.StatusOK {
+			fmt.Printf("%s is down\n", s.URL)
+			s.IsHealthy = false
+		} else {
+			s.IsHealthy = true
+		}
+		s.Mutex.Unlock()
+	}
+}
+
 func main() {
-	config, err := LoadConfig("config.json")
+	config, err := config.LoadConfig("config.json")
 	if err != nil {
 		log.Fatalf("Error loading configuration: %s", err.Error())
 	}
@@ -28,7 +80,7 @@ func main() {
 		u, _ := url.Parse(serverUrl)
 		server := &Server{URL: u, IsHealthy: true}
 		servers = append(servers, server)
-		go HealthCheck(server, healthCheckInterval)
+		go healthCheck(server, healthCheckInterval)
 	}
 
 	lb := LoadBalancer{Current: 0}
