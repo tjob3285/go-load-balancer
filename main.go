@@ -1,91 +1,19 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
-	"sync"
 	"time"
 )
-
-type LoadBalancer struct {
-	Current int
-	Mutex   sync.Mutex
-}
-
-type Server struct {
-	URL       *url.URL
-	IsHealthy bool
-	Mutex     sync.Mutex
-}
-
-type Config struct {
-	Port                string   `json:"port"`
-	HealthCheckInterval string   `json:"healthCheckInterval"`
-	Servers             []string `json:"servers"`
-}
-
-func loadConfig(file string) (Config, error) {
-	var config Config
-
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return config, err
-	}
-
-	err = json.Unmarshal(data, &config)
-	if err != nil {
-		return config, err
-	}
-
-	return config, nil
-}
-
-func (lb *LoadBalancer) getNextServer(servers []*Server) *Server {
-	lb.Mutex.Lock()
-	defer lb.Mutex.Unlock()
-
-	for i := 0; i < len(servers); i++ {
-		index := lb.Current % len(servers)
-		nextServer := servers[index]
-		lb.Current++
-
-		nextServer.Mutex.Lock()
-		isHealthy := nextServer.IsHealthy
-		nextServer.Mutex.Unlock()
-
-		if isHealthy {
-			return nextServer
-		}
-	}
-
-	return nil
-}
-
-func healthCheck(s *Server, healthCheckInterval time.Duration) {
-	for range time.Tick(healthCheckInterval) {
-		res, err := http.Head(s.URL.String())
-		s.Mutex.Lock()
-		if err != nil || res.StatusCode != http.StatusOK {
-			fmt.Print("%f is down\n", s.URL)
-			s.IsHealthy = false
-		} else {
-			s.IsHealthy = true
-		}
-		s.Mutex.Unlock()
-	}
-}
 
 func (s *Server) ReverseProxy() *httputil.ReverseProxy {
 	return httputil.NewSingleHostReverseProxy(s.URL)
 }
 
 func main() {
-	config, err := loadConfig("config.json")
+	config, err := LoadConfig("config.json")
 	if err != nil {
 		log.Fatalf("Error loading configuration: %s", err.Error())
 	}
@@ -100,7 +28,7 @@ func main() {
 		u, _ := url.Parse(serverUrl)
 		server := &Server{URL: u, IsHealthy: true}
 		servers = append(servers, server)
-		go healthCheck(server, healthCheckInterval)
+		go HealthCheck(server, healthCheckInterval)
 	}
 
 	lb := LoadBalancer{Current: 0}
