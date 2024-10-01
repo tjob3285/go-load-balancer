@@ -50,7 +50,6 @@ func (lb *RoundRobinLB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("server is ", server.URL)
 		proxy.ServerHttp(w, r)
 	} else {
-		fmt.Println("server is ", server)
 		// TODO:
 		// Handle the case when no available server is found
 	}
