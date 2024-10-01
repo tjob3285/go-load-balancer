@@ -1,10 +1,10 @@
 {
-    "port": ":8080",
-    "healthCheckInterval": "2s",
-    "servers": [
-      "http://localhost:8081",
-      "http://localhost:8082",
-      "http://localhost:8083",
-      "http://localhost:8084"
-    ]
-  }
+  "urls": [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002"
+  ],
+  "healthInterval": "15s",
+  "port": ":8080",
+  "algorithm": "round-robin"
+}

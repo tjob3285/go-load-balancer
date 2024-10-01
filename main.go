@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"sync"
 	"time"
@@ -12,94 +11,72 @@ import (
 	"github.com/tjob3285/go-load-balancer/config"
 )
 
+// Server represents a backend server.
 type Server struct {
-	URL       *url.URL
-	IsHealthy bool
-	Mutex     sync.Mutex
-}
-
-type LoadBalancer struct {
-	Current int
-	Mutex   sync.Mutex
-}
-
-// round robin algorithm implementation to distribute load across servers
-func (lb *LoadBalancer) getNextServer(servers []*Server) *Server {
-	lb.Mutex.Lock()
-	defer lb.Mutex.Unlock()
-
-	for i := 0; i < len(servers); i++ {
-		idx := lb.Current % len(servers)
-		nextServer := servers[idx]
-		lb.Current++
-
-		nextServer.Mutex.Lock()
-		isHealthy := nextServer.IsHealthy
-		nextServer.Mutex.Unlock()
-
-		if isHealthy {
-			return nextServer
-		}
-	}
-
-	return nil
-}
-
-func (s *Server) ReverseProxy() *httputil.ReverseProxy {
-	return httputil.NewSingleHostReverseProxy(s.URL)
+	URL         *url.URL
+	Alive       bool
+	Connections int
+	mutex       sync.Mutex // using it to protect concurrent access to alive and connections field
 }
 
 // health check function that runs in given interval to check health of servers
 func healthCheck(s *Server, healthCheckInterval time.Duration) {
 	for range time.Tick(healthCheckInterval) {
 		res, err := http.Head(s.URL.String())
-		s.Mutex.Lock()
+		s.mutex.Lock()
 		if err != nil || res.StatusCode != http.StatusOK {
-			fmt.Printf("%s is down\n", s.URL)
-			s.IsHealthy = false
+			fmt.Printf("%s is down, alert someone!\n", s.URL)
+			s.Alive = false
 		} else {
-			s.IsHealthy = true
+			fmt.Printf("%s is alive and running\n", s.URL)
+			s.Alive = true
 		}
-		s.Mutex.Unlock()
+		s.mutex.Unlock()
 	}
 }
 
 func main() {
+	// config file for servers and backend server
 	config, err := config.LoadConfig("config.json")
 	if err != nil {
 		log.Fatalf("Error loading configuration: %s", err.Error())
 	}
 
-	healthCheckInterval, err := time.ParseDuration(config.HealthCheckInterval)
+	healthCheckInterval, err := time.ParseDuration(config.HealthInterval)
 	if err != nil {
 		log.Fatalf("Invalid health check interval: %s", err.Error())
 	}
 
+	// map config servers to Server type and run health checks
 	var servers []*Server
-	for _, serverUrl := range config.Servers {
+	for _, serverUrl := range config.URLs {
 		u, _ := url.Parse(serverUrl)
-		server := &Server{URL: u, IsHealthy: true}
+
+		server := &Server{URL: u, Alive: true}
 		servers = append(servers, server)
 		go healthCheck(server, healthCheckInterval)
 	}
 
-	lb := LoadBalancer{Current: 0}
+	// switch lb based on config algorithm
+	var loadBalancer http.Handler
+	switch config.Algorithm {
+	case "round-robin":
+		loadBalancer = NewRoundRobinLB(servers)
+	case "least-connection":
+		loadBalancer = NewLeastConnectionLB(servers)
+	case "rdm":
+		loadBalancer = NewRandomLB(servers)
+	default:
+		log.Fatalf("Invalid algorithm type")
+	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		server := lb.getNextServer(servers)
-		if server == nil {
-			http.Error(w, "No healthy server available", http.StatusServiceUnavailable)
-			return
-		}
+	// Register the load balancers as HTTP handlers
+	http.Handle("/", loadBalancer)
 
-		// adding this header just for checking from which server the request is being handled.
-		// this is not recommended from security perspective as we don't want to let the client know which server is handling the request.
-		w.Header().Add("X-Forwarded-Server", server.URL.String())
-		server.ReverseProxy().ServeHTTP(w, r)
-	})
+	// Start the server
+	fmt.Println("Load balancers started.")
 
-	log.Println("Starting load balancer on port", config.Port)
-	err = http.ListenAndServe(config.Port, nil)
+	err = http.ListenAndServe(":8080", nil)
 	if err != nil {
 		log.Fatalf("Error starting load balancer: %s\n", err.Error())
 	}

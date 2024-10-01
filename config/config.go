@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	Port                string   `json:"port"`
-	HealthCheckInterval string   `json:"healthCheckInterval"`
-	Servers             []string `json:"servers"`
+	URLs           []string `json:"urls"`
+	Port           string   `json:"port"`
+	Algorithm      string   `json:"algorithm"`
+	HealthInterval string   `json:"healthInterval"`
 }
 
 func LoadConfig(file string) (Config, error) {
