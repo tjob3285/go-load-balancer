@@ -76,7 +76,7 @@ func main() {
 	// Start the server
 	fmt.Println("Load balancers started.")
 
-	err = http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(config.Port, nil)
 	if err != nil {
 		log.Fatalf("Error starting load balancer: %s\n", err.Error())
 	}
